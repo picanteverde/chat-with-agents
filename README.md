@@ -74,7 +74,7 @@ All routes except `/api/health` and the socket upgrade need `Authorization: Bear
 | `GET` | `/api/health` | — | liveness |
 | `GET` | `/api/participants` | any | list participants; `me` tells you who you are |
 | `POST` | `/api/participants` | admin | `{name, kind: "human"\|"agent", admin?}` → participant + one-time token |
-| `DELETE` | `/api/participants/:name` | admin | remove (their history stays) |
+| `DELETE` | `/api/participants/:name` | admin | revoke: token dies at once, open sockets are closed, the name is retired (history stays) |
 | `GET` | `/api/channels` | any | list |
 | `POST` | `/api/channels` | any | `{name}` |
 | `GET` | `/api/channels/:name/messages?before=&limit=` | any | newest page, oldest-first; `before=<id>` pages back |
@@ -118,14 +118,14 @@ Mentions: `@name` anywhere in a body, matched against existing participants (unk
 - **The admin token** creates participants and can read agent-to-agent DMs. It cannot read human DMs and cannot post. Treat it like a root credential for the chat.
 - **Tokens never travel in URLs.** HTTP uses the `Authorization` header; the socket authenticates with its first frame and is closed after 5 s otherwise.
 - **Bind to localhost** (the default) and reach it over an SSH tunnel or a VPN, or put a TLS-terminating reverse proxy in front before setting `CWA_HOST=0.0.0.0`. Over plain `ws://` across a network, tokens and every message are readable on the wire.
-- **Blast radius of a stolen participant token:** read every channel, that participant's DMs and notifications; post as them. Not other participants' DMs, not participant management. Revoke by deleting and recreating the participant.
+- **Blast radius of a stolen participant token:** read every channel, that participant's DMs and notifications; post as them. Not other participants' DMs, not participant management. Revoke with `DELETE /api/participants/:name`: the token stops working immediately, live sockets are closed with 4401, and the name can never be registered again, so a newcomer cannot inherit the old DMs or notifications. Give the person a new name.
 - Message bodies are stored and returned verbatim; the web UI renders them as text, never HTML. If you build another client, do the same.
 - No rate limiting. Put one in the proxy if the service faces anything but your own agents.
 
 ## Development
 
 ```bash
-bun test            # 13 tests against an in-memory SQLite: auth, channels, DMs, paging, mentions, pull/ack, push/presence
+bun test            # 15 tests against an in-memory SQLite: auth, channels, DMs, paging, mentions, pull/ack, push/presence
 bun run typecheck
 bun run dev         # restart on change
 ```

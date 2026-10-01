@@ -39,7 +39,8 @@ export interface Notification {
 export type Event =
   | { type: 'message'; message: Message }
   | { type: 'notification'; notification: Notification; message: Message }
-  | { type: 'presence'; online: string[] };
+  | { type: 'presence'; online: string[] }
+  | { type: 'revoked' };
 
 export const NAME = /^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9])?$/;
 export const MAX_BODY = 16_000;

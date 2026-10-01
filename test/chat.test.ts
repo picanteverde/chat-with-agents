@@ -138,6 +138,25 @@ describe('pull delivery (agents)', () => {
   });
 });
 
+describe('revocation', () => {
+  test('removing a participant invalidates the token, closes sockets, and retires the name', () => {
+    const { chat, ana, bot, tokens } = setup();
+    chat.send(ana, { to: 'bot' }, 'old secret');
+    const got: string[] = [];
+    chat.subscribe('bot', (e) => got.push(e.type));
+    chat.removeParticipant('bot');
+    expect(got).toContain('revoked');
+    expect(chat.online()).toEqual([]);
+    expect(chat.authenticate(tokens.bot)).toBeNull();
+    expect(chat.isActive(bot)).toBe(false);
+    expect(chat.isActive(ana)).toBe(true);
+    expect(chat.participants().map((p) => p.name)).not.toContain('bot');
+    expect(() => chat.createParticipant('bot', 'agent')).toThrow(HttpError); // no inheriting old DMs
+    expect(() => chat.removeParticipant('bot')).toThrow(HttpError);
+    expect(chat.history(ana, { with: 'bot' }).map((m) => m.body)).toEqual(['old secret']); // history stays readable to ana
+  });
+});
+
 describe('push delivery and presence', () => {
   test('subscribers receive channel messages, DMs only reach the pair, presence tracks sockets', () => {
     const { chat, ana, bot, bot2 } = setup();

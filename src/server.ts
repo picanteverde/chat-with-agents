@@ -167,7 +167,13 @@ const server = Bun.serve<WsData>({
         }
         if (d.timer) clearTimeout(d.timer);
         d.participant = p;
-        const send = (event: Event) => ws.send(JSON.stringify(event));
+        const send = (event: Event) => {
+          if (event.type === 'revoked') {
+            ws.close(4401, 'participant removed');
+            return;
+          }
+          ws.send(JSON.stringify(event));
+        };
         if (p.id !== 0) d.unsubscribe = chat.subscribe(p.name, send);
         ws.send(JSON.stringify({ type: 'ready', me: p.name, online: chat.online() }));
         // Re-deliver unread notifications (at-least-once); the client acks them.
@@ -175,6 +181,10 @@ const server = Bun.serve<WsData>({
         return;
       }
       // Authenticated frames: {type:"send", channel|to, body} or {type:"ack", ids:[…]}
+      if (!chat.isActive(d.participant)) {
+        ws.close(4401, 'participant removed');
+        return;
+      }
       try {
         const m = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw)) as Record<string, unknown>;
         if (m.type === 'send') {

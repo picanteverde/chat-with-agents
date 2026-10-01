@@ -41,6 +41,7 @@ export class Chat {
     const n = assertName(name);
     if (kind !== 'human' && kind !== 'agent') throw new HttpError(400, 'kind must be "human" or "agent"');
     if (this.store.participantByName(n)) throw new HttpError(409, `participant ${n} already exists`);
+    if (this.store.nameRetired(n)) throw new HttpError(409, `${n} belonged to a removed participant; names are not reused`);
     const token = newToken();
     const participant = this.store.createParticipant(n, kind as Kind, hashToken(token), admin);
     return { participant, token };
@@ -54,9 +55,17 @@ export class Chat {
     return this.store.listParticipants();
   }
 
+  /** Revoke a participant: token invalid at once, live sockets told to close, name retired. */
   removeParticipant(name: string): void {
-    if (!this.store.deleteParticipant(assertName(name))) throw new HttpError(404, 'participant not found');
+    if (!this.store.revokeParticipant(assertName(name))) throw new HttpError(404, 'participant not found');
+    this.push(name, { type: 'revoked' });
     this.listeners.delete(name);
+    this.broadcastPresence();
+  }
+
+  /** True while the participant's token is still valid (used to re-check long-lived sockets). */
+  isActive(p: Participant): boolean {
+    return p.id === 0 || this.store.participantByName(p.name)?.id === p.id;
   }
 
   /* ───────── channels ───────── */

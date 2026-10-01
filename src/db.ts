@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS participants (
   admin INTEGER NOT NULL DEFAULT 0,
   token_hash TEXT NOT NULL UNIQUE,
   cursor INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  revoked_at TEXT
 );
 CREATE TABLE IF NOT EXISTS channels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,18 +94,24 @@ export class Store {
     return toParticipant(row);
   }
   participantByToken(tokenHash: string): Participant | null {
-    const r = this.db.query<ParticipantRow, [string]>('SELECT id, name, kind, admin, cursor, created_at FROM participants WHERE token_hash = ?').get(tokenHash);
+    const r = this.db.query<ParticipantRow, [string]>('SELECT id, name, kind, admin, cursor, created_at FROM participants WHERE token_hash = ? AND revoked_at IS NULL').get(tokenHash);
     return r ? toParticipant(r) : null;
   }
   participantByName(name: string): Participant | null {
-    const r = this.db.query<ParticipantRow, [string]>('SELECT id, name, kind, admin, cursor, created_at FROM participants WHERE name = ?').get(name);
+    const r = this.db.query<ParticipantRow, [string]>('SELECT id, name, kind, admin, cursor, created_at FROM participants WHERE name = ? AND revoked_at IS NULL').get(name);
     return r ? toParticipant(r) : null;
   }
   listParticipants(): Participant[] {
-    return this.db.query<ParticipantRow, []>('SELECT id, name, kind, admin, cursor, created_at FROM participants ORDER BY name').all().map(toParticipant);
+    return this.db.query<ParticipantRow, []>('SELECT id, name, kind, admin, cursor, created_at FROM participants WHERE revoked_at IS NULL ORDER BY name').all().map(toParticipant);
   }
-  deleteParticipant(name: string): boolean {
-    return this.db.query<unknown, [string]>('DELETE FROM participants WHERE name = ?').run(name).changes > 0;
+  /** Revoke: the token stops working and the name is retired forever (history stays attributable). */
+  revokeParticipant(name: string): boolean {
+    return this.db
+      .query<unknown, [string, string, string]>("UPDATE participants SET revoked_at = ?, token_hash = 'revoked:' || id || ':' || ? WHERE name = ? AND revoked_at IS NULL")
+      .run(now(), crypto.randomUUID(), name).changes > 0;
+  }
+  nameRetired(name: string): boolean {
+    return !!this.db.query<{ id: number }, [string]>('SELECT id FROM participants WHERE name = ? AND revoked_at IS NOT NULL').get(name);
   }
   getCursor(name: string): number {
     return this.db.query<{ cursor: number }, [string]>('SELECT cursor FROM participants WHERE name = ?').get(name)?.cursor ?? 0;
