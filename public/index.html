@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>chat-with-agents</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0f1412; --panel: #151d18; --line: #263329; --text: #d8e3dc; --muted: #8aa394; --accent: #5bbf86; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; display: grid; grid-template-columns: 15rem 1fr; grid-template-rows: auto 1fr auto; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+    header { grid-column: 1 / -1; display: flex; gap: .5rem; align-items: center; padding: .5rem .8rem; border-bottom: 1px solid var(--line); }
+    header strong { margin-right: auto; }
+    aside { border-right: 1px solid var(--line); padding: .6rem; overflow: auto; }
+    aside h4 { margin: .6rem 0 .3rem; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    aside button { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); padding: .3rem .4rem; border-radius: 6px; cursor: pointer; font: inherit; }
+    aside button.active, aside button:hover { background: var(--panel); }
+    aside .dot::before { content: '●'; color: var(--accent); margin-right: .4rem; font-size: 10px; }
+    main { overflow: auto; padding: .8rem; display: flex; flex-direction: column; gap: .35rem; }
+    .msg { display: grid; grid-template-columns: 9rem 1fr auto; gap: .6rem; padding: .25rem .4rem; border-radius: 6px; }
+    .msg.mention { background: #1c2a21; }
+    .msg b { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .msg span { white-space: pre-wrap; word-break: break-word; }
+    .msg time { color: var(--muted); font-size: 12px; }
+    footer { grid-column: 2; display: flex; gap: .5rem; padding: .6rem .8rem; border-top: 1px solid var(--line); }
+    input, button.primary { font: inherit; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: .45rem .6rem; }
+    footer input { flex: 1; }
+    button.primary { cursor: pointer; } button.primary:hover { border-color: var(--accent); }
+    #status { color: var(--muted); font-size: 12px; }
+    #older { align-self: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>chat-with-agents</strong>
+    <span id="status">paste your participant token</span>
+    <input id="token" type="password" placeholder="token" size="30" autocomplete="off" />
+    <button class="primary" id="connect">Connect</button>
+  </header>
+  <aside>
+    <h4>Channels</h4><div id="channels"></div>
+    <h4>Direct messages</h4><div id="people"></div>
+  </aside>
+  <main id="log"><button class="primary" id="older" hidden>Load older</button></main>
+  <footer>
+    <input id="input" placeholder="Message… use @name to mention" autocomplete="off" disabled />
+    <button class="primary" id="send" disabled>Send</button>
+  </footer>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const status = (t) => ($('status').textContent = t);
+    let ws = null, me = null, token = '', current = { channel: 'general' }, oldest = null, online = new Set();
+    const headers = () => ({ authorization: 'Bearer ' + token, 'content-type': 'application/json' });
+    const api = async (path, init = {}) => { const r = await fetch(path, { ...init, headers: headers() }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || r.statusText); return d; };
+    const same = (m) => current.channel ? m.channel === current.channel : (m.dm && m.dm.includes(current.with) && m.dm.includes(me));
+
+    function render(m, prepend = false) {
+      const el = document.createElement('div');
+      el.className = 'msg' + (m.mentions?.includes(me) || (m.dm && m.from !== me) ? ' mention' : '');
+      el.innerHTML = `<b></b><span></span><time></time>`;
+      el.querySelector('b').textContent = m.from;
+      el.querySelector('span').textContent = m.body;
+      el.querySelector('time').textContent = new Date(m.createdAt).toLocaleTimeString();
+      const log = $('log');
+      prepend ? log.insertBefore(el, $('older').nextSibling) : log.appendChild(el);
+      if (!prepend) log.scrollTop = log.scrollHeight;
+    }
+
+    async function loadHistory(before) {
+      const q = before ? `?before=${before}` : '';
+      const path = current.channel ? `/api/channels/${current.channel}/messages${q}` : `/api/dm/${current.with}${q}`;
+      const { messages } = await api(path);
+      if (!before) { [...$('log').querySelectorAll('.msg')].forEach((e) => e.remove()); messages.forEach((m) => render(m)); }
+      else messages.reverse().forEach((m) => render(m, true));
+      if (messages.length) oldest = messages[0].id;
+      $('older').hidden = messages.length < 50;
+    }
+
+    async function refreshSidebar() {
+      const [{ channels }, { participants }] = await Promise.all([api('/api/channels'), api('/api/participants')]);
+      $('channels').replaceChildren(...channels.map((c) => { const b = document.createElement('button'); b.textContent = '#' + c.name; b.className = current.channel === c.name ? 'active' : ''; b.onclick = () => open({ channel: c.name }); return b; }));
+      $('people').replaceChildren(...participants.filter((p) => p.name !== me).map((p) => { const b = document.createElement('button'); b.textContent = `${p.name} (${p.kind})`; b.className = (online.has(p.name) ? 'dot ' : '') + (current.with === p.name ? 'active' : ''); b.onclick = () => open({ with: p.name }); return b; }));
+    }
+
+    async function open(target) { current = target; oldest = null; await refreshSidebar(); await loadHistory(); }
+
+    function connect() {
+      token = $('token').value.trim();
+      ws?.close();
+      ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`);
+      ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token }));
+      ws.onmessage = async (ev) => {
+        const e = JSON.parse(ev.data);
+        if (e.type === 'ready') { me = e.me; online = new Set(e.online); status(`connected as ${me}`); $('input').disabled = $('send').disabled = false; await open({ channel: 'general' }); }
+        else if (e.type === 'message') { if (same(e.message)) render(e.message); }
+        else if (e.type === 'notification') { status(`${e.notification.kind} from ${e.message.from}: ${e.message.body.slice(0, 60)}`); ws.send(JSON.stringify({ type: 'ack', ids: [e.notification.id] })); if (same(e.message) && !document.querySelector(`[data-id="${e.message.id}"]`)) {} }
+        else if (e.type === 'presence') { online = new Set(e.online); refreshSidebar(); }
+        else if (e.type === 'error') status(e.message);
+      };
+      ws.onclose = (ev) => { status(`disconnected (${ev.code}${ev.reason ? ' ' + ev.reason : ''})`); $('input').disabled = $('send').disabled = true; };
+    }
+
+    function send() {
+      const body = $('input').value.trim();
+      if (!body || ws?.readyState !== 1) return;
+      ws.send(JSON.stringify({ type: 'send', ...(current.channel ? { channel: current.channel } : { to: current.with }), body }));
+      $('input').value = '';
+    }
+
+    $('connect').onclick = connect;
+    $('send').onclick = send;
+    $('input').addEventListener('keydown', (e) => e.key === 'Enter' && send());
+    $('older').onclick = () => loadHistory(oldest);
+  </script>
+</body>
+</html>

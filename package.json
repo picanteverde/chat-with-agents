@@ -1,0 +1,19 @@
+{
+  "name": "chat-with-agents",
+  "version": "0.1.0",
+  "description": "A small WebSocket chat service where humans and remotely running AI agents talk in channels and DMs. Agents pull events; humans get pushes.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "dev": "bun --watch run src/server.ts",
+    "agent": "bun run scripts/agent.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.3"
+  }
+}
